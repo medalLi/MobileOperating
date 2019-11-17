@@ -1,0 +1,48 @@
+    private String bussinessRst ; // 业务结果
+    private String channelCode; // 渠道编码
+    private String chargefee; // 订单的充值金额
+    private String clientIp; // 客户端ip
+    private String gateway_id; //支付平台id,目前是手机支付
+    private String idType; // 中国移动用户标识类型
+    private String interFacRst; // 接口结果
+    private String logOutTime; // 日志输出时间
+    private String orderId; // 订单号
+    private String phoneno; // 被充值的手机号
+    private String provinceCode; // 省份编码
+    private String receiveNotifyTime; //接到支付通知时间
+    private String requestId; // 订单流水号
+    private String resultTime; // 省BOSS充值处理时间
+    private String retMsg; // 失败原因
+    private String serverIp; // 服务器IP
+    private String serverPort; // 接口服务器端口
+    private String serviceName; // 接口服务名
+    private String sysId;  //平台编码
+
+一、业务概况
+需求1：统计全网的充值订单量
+    来一条数据就是一笔订单量，直接定义一个累加器，消费一条数据，值就相应的加1
+需求2：充值金额
+    json串中chargefee属性表示的是订单充值金额
+需求3：充值成功率
+    充值成功率 = 充值成功的订单量/总的订单量，json串中bussinessRst属性等于0000，代表充值成功
+需求4：充值平均时长
+    json串中requestId订单流水号中包含有订单开始时间，而receiveNotifyTime表示接到支付通知的时间，两个时间
+    取差集即可得到每笔充值时间的时长
+
+二、业务质量
+需求1：统计每个省份的充值失败的数据量
+    前面有总的订单和充值成功的订单，取差集就表示失败的订单量，然后根据json串中省份编码，映射到对应的省份即可
+需求2：统计支付订单的最大，最小时长
+    拿到每笔支付订单的时长，然后取最大，最小，平均值，json串中interFacRst属性等于0000，表示支付订单
+需求3：统计充值订单的最大，最小时长
+    同一中，需求4
+需求4：以省份为维度统计订单量排名前10的省份数据，并且统计每个省份的订单成功率
+    以省份进行聚合，取top10，然后计算每个省份的订单成功率
+需求5：以省份为维度统计每个省份的充值失败数，及失败率和主要原因
+    以省份进行聚合，计算失败率和分析主要原因
+需求6：实时统计每分钟的充值笔数和充值金额
+    以每分钟进行聚合，计算这一分钟的充值笔数和充值金额
+需求7：以省份为维度，统计每分钟各省份的充值笔数和充值金额
+需求8：以省份为维度，统计每日各省的充值笔数和充值金额
+
+

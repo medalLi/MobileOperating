@@ -1,0 +1,7 @@
+./bin/spark-submit \
+--jars $(echo /home/medal/myProject/mobileOperating/spark_jars/*.jar | tr ' ' ',')   \
+--class com.spark.Demo02  \
+--master spark://cdh.medal.com:7077  \
+--executor-memory 8g  \
+--total-executor-cores 4  \
+/home/medal/myProject/mobileOperating/MobileOperating-1.0-SNAPSHOT.jar

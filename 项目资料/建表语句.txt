@@ -1,0 +1,12 @@
+create database mobileOperation;
+CREATE TABLE `order_info` (
+  `_year` varchar(10) DEFAULT NULL,
+  `_month` varchar(10) DEFAULT NULL,
+  `_day` varchar(10) DEFAULT NULL,
+  `_hour` varchar(10) DEFAULT NULL,
+  `_minute` varchar(10) DEFAULT NULL,
+  `_total` double(10,2) DEFAULT NULL,
+  `_success` double(10,2) DEFAULT NULL,
+  `_money` double(10,2) DEFAULT NULL,
+  `_time` double(10,2) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
