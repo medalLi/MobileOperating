@@ -41,7 +41,7 @@ public class MyKafkaProducer {
         while ((line = br.readLine()) != null){
             record = new ProducerRecord<Integer, String>("testTopic", line);
             producer.send(record);
-            // Thread.sleep(100);
+             Thread.sleep(100);
         }
 
         producer.close();

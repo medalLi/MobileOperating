@@ -29,9 +29,9 @@ public class MysqlPool implements Serializable {
         try {
             cpds.setDriverClass("com.mysql.jdbc.Driver");
             // 本地环境
-            //cpds.setJdbcUrl("jdbc:mysql://localhost:3306/mobileOperation?useUnicode=true&characterEncoding=utf-8&useSSL=false");
+            cpds.setJdbcUrl("jdbc:mysql://localhost:3306/mobileOperation?useUnicode=true&characterEncoding=utf-8&useSSL=false");
             // 集群环境
-            cpds.setJdbcUrl("jdbc:mysql://cdh.medal.com:3306/mobileOperation?useUnicode=true&characterEncoding=utf-8&useSSL=false");
+           // cpds.setJdbcUrl("jdbc:mysql://cdh.medal.com:3306/mobileOperation?useUnicode=true&characterEncoding=utf-8&useSSL=false");
             cpds.setUser("root");
             cpds.setPassword("centos");
             cpds.setInitialPoolSize(5);

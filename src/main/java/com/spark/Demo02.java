@@ -1,8 +1,10 @@
 package com.spark;
 
 import com.alibaba.fastjson.JSONObject;
+import com.utils.KafkaOffsetUtil;
 import com.utils.MysqlPool;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -16,15 +18,14 @@ import org.apache.spark.streaming.Durations;
 import org.apache.spark.streaming.api.java.JavaDStream;
 import org.apache.spark.streaming.api.java.JavaInputDStream;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
-import org.apache.spark.streaming.kafka010.ConsumerStrategies;
-import org.apache.spark.streaming.kafka010.KafkaUtils;
-import org.apache.spark.streaming.kafka010.LocationStrategies;
+import org.apache.spark.streaming.kafka010.*;
 import scala.Tuple2;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
@@ -37,41 +38,67 @@ public class Demo02 {
     public static void main(String[] args)  {
         try {
         SparkConf sparkConf = new SparkConf().setAppName("Demo02");
-        //sparkConf.setMaster("local[6]");
+        sparkConf.setMaster("local[*]");
 
-//        sparkConf.set("spark.driver.cores","2");
-//        sparkConf.set("spark.driver.memory","4g");
-//        sparkConf.set("spark.executor.memory","4g");
         sparkConf.set("spark.streaming.stopGracefullyOnShutdown", "true");
         sparkConf.set("spark.streaming.kafka.maxRatePerPartition", "5000");  // Kafka每个分区每次最多5000条
         sparkConf.set("spark.default.parallelism", "6");
         sparkConf.set("spark.streaming.backpressure.enabled", "true");
         sparkConf.set("spark.streaming.kafka.consumer.poll.ms", "4000");
         sparkConf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer");
-
-        JavaStreamingContext jssc = new JavaStreamingContext(sparkConf, Durations.seconds(30));
+// 433264   216632
+        JavaStreamingContext jssc = new JavaStreamingContext(sparkConf, Durations.seconds(3));
 
         Map<String, Object> kafkaParams = new HashMap<>();
         kafkaParams.put("bootstrap.servers", "cdh.medal.com:9092");
         kafkaParams.put("key.deserializer", StringDeserializer.class);
         kafkaParams.put("value.deserializer", StringDeserializer.class);
-        kafkaParams.put("group.id", "use_a_separate_group_id_for_each_stream");
-        kafkaParams.put("auto.offset.reset", "latest");
+        kafkaParams.put("group.id", "medalTestOffset");
+   //     kafkaParams.put("auto.offset.reset", "latest");
      //   kafkaParams.put("auto.offset.reset", "earliest");
         kafkaParams.put("enable.auto.commit", false);
 
         Collection<String> topics = Arrays.asList("testTopic");
 
-        JavaInputDStream<ConsumerRecord<String, String>> messages =
-                KafkaUtils.createDirectStream(
-                        jssc,
-                        LocationStrategies.PreferConsistent(),
-                        ConsumerStrategies.<String, String>Subscribe(topics, kafkaParams)
-                );
+        // 获取偏移量
+            Map<TopicPartition,Long> myOffset = null;
+            JavaInputDStream<ConsumerRecord<String, String>> messages = null;
 
-        JavaDStream<String> lines = messages.map(new Function<ConsumerRecord<String, String>, String>() {
+            try {
+                myOffset = KafkaOffsetUtil.getMyCurrentOffset();
+                messages =
+                        KafkaUtils.createDirectStream(
+                                jssc,
+                                LocationStrategies.PreferConsistent(),
+                                ConsumerStrategies.Subscribe(topics, kafkaParams,myOffset)
+                        );
+            } catch (Exception e) { // 如果手动维护偏移量失败，则自动维护偏移量
+               // e.printStackTrace();
+                messages =
+                        KafkaUtils.createDirectStream(
+                                jssc,
+                                LocationStrategies.PreferConsistent(),
+                                ConsumerStrategies.Subscribe(topics, kafkaParams)
+                        );
+            }
+
+        final AtomicReference<OffsetRange[]> atomicReference = new AtomicReference<>();
+
+        JavaDStream<ConsumerRecord<String, String>> transform
+                = messages.transform(new Function<JavaRDD<ConsumerRecord<String, String>>, JavaRDD<ConsumerRecord<String, String>>>() {
+            @Override
+            public JavaRDD<ConsumerRecord<String, String>> call(JavaRDD<ConsumerRecord<String, String>> value) throws Exception {
+
+                OffsetRange[] offsetRanges = ((HasOffsetRanges) value.rdd()).offsetRanges();
+                atomicReference.set(offsetRanges);
+                return value;
+            }
+        });
+
+        JavaDStream<String> lines = transform.map(new Function<ConsumerRecord<String, String>, String>() {
             @Override
             public String call(ConsumerRecord<String, String> consumerRecord) throws Exception {
+
                 return consumerRecord.value();
             }
         });
@@ -92,7 +119,7 @@ public class Demo02 {
         });
 
         // rdd 转换完成
-            insertMysql(filter);
+            insertMysql(filter,atomicReference);
 
             jssc.start();
             jssc.awaitTermination();
@@ -102,13 +129,19 @@ public class Demo02 {
         }
     }
 
-    public static  void insertMysql(JavaDStream<JSONObject> filter){
+    public static  void insertMysql(JavaDStream<JSONObject> filter
+                    ,AtomicReference<OffsetRange[]> atomicReference) {
         //持久化数据
         filter.persist(StorageLevel.MEMORY_ONLY());
 
         filter.foreachRDD(new VoidFunction<JavaRDD<JSONObject>>() {
+
             @Override
             public void call(JavaRDD<JSONObject> stringJavaRDD) throws Exception {
+              //  OffsetRange[] offsetRanges = ((HasOffsetRanges) rdd.rdd()).offsetRanges();
+                // 获取偏移量
+               // OffsetRange[] offsetRanges = ((HasOffsetRanges)stringJavaRDD.rdd()).offsetRanges();
+
                 long num = stringJavaRDD.count();
                 if (num == 0) {
                     return;
@@ -152,7 +185,10 @@ public class Demo02 {
                     }
                 });
 
-              //  System.out.println(baseRDD.count());
+
+                final OffsetRange[] offsetRanges = atomicReference.get();
+
+                KafkaOffsetUtil.saveCurrentOffset(offsetRanges);
 
                 baseRDD.foreachPartition(new VoidFunction<Iterator<Tuple2<String[], Double[]>>>() {
                     @Override
@@ -178,9 +214,13 @@ public class Demo02 {
 
                         ps.executeUpdate(exe_sql);
                         //   conn.commit();
+                        conn.close();
 
                     }
                 });
+
+
+
             }
         });
     }
