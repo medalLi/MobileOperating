@@ -6,6 +6,7 @@ import org.apache.spark.streaming.kafka010.OffsetRange;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -15,21 +16,27 @@ import java.util.Map;
  * @create 2019-12-28 13:05
  **/
 public class KafkaOffsetUtil {
-    public static Map<TopicPartition,Long> getMyCurrentOffset() throws Exception{
+    public static Map<TopicPartition,Long> getMyCurrentOffset() {
         Map<TopicPartition,Long> map = new HashMap<>();
 
         Connection connection = MysqlPool.getInstance().getConnection();
         String sql = "select * from mytest.kafkaOffset where topicName ='testTopic' and groupId = 'medalTestOffset'";
-        PreparedStatement ps = connection.prepareStatement(sql);
-        ResultSet resultSet = ps.executeQuery();
-        while(resultSet.next()){
-           String topic =  resultSet.getString("testTopic");
-           int patition = resultSet.getInt("partitionId");
-           long offset = resultSet.getLong("offset");
-          // String groupId = resultSet.getString("groupId");
+        PreparedStatement ps = null;
+        try {
+            ps = connection.prepareStatement(sql);
+            ResultSet resultSet = ps.executeQuery();
+            while(resultSet.next()){
+                String topic =  resultSet.getString("topicName");
+                int patition = resultSet.getInt("partitionId");
+                long offset = resultSet.getLong("offset");
+                // String groupId = resultSet.getString("groupId");
 
-           map.put(new TopicPartition(topic,patition),offset);
+                map.put(new TopicPartition(topic,patition),offset);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
         }
+
       //  TopicPartition topicPartition = new TopicPartition("",);
         return  map;
     }
@@ -53,4 +60,5 @@ public class KafkaOffsetUtil {
         ps.executeUpdate();
 
     }
+
 }

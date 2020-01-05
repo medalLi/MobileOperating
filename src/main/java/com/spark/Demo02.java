@@ -15,6 +15,7 @@ import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.api.java.function.VoidFunction;
 import org.apache.spark.storage.StorageLevel;
 import org.apache.spark.streaming.Durations;
+import org.apache.spark.streaming.Time;
 import org.apache.spark.streaming.api.java.JavaDStream;
 import org.apache.spark.streaming.api.java.JavaInputDStream;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
@@ -61,11 +62,10 @@ public class Demo02 {
         Collection<String> topics = Arrays.asList("testTopic");
 
         // 获取偏移量
-            Map<TopicPartition,Long> myOffset = null;
+            Map<TopicPartition,Long> myOffset = KafkaOffsetUtil.getMyCurrentOffset();
             JavaInputDStream<ConsumerRecord<String, String>> messages = null;
 
             try {
-                myOffset = KafkaOffsetUtil.getMyCurrentOffset();
                 messages =
                         KafkaUtils.createDirectStream(
                                 jssc,
@@ -80,46 +80,45 @@ public class Demo02 {
                                 LocationStrategies.PreferConsistent(),
                                 ConsumerStrategies.Subscribe(topics, kafkaParams)
                         );
+
+                System.out.println("手动维护偏移量！》》》》》》》》》》》》》》》》》》》》》》》");
             }
 
-        final AtomicReference<OffsetRange[]> atomicReference = new AtomicReference<>();
+//        final AtomicReference<OffsetRange[]> atomicReference = new AtomicReference<>();
 
-        JavaDStream<ConsumerRecord<String, String>> transform
-                = messages.transform(new Function<JavaRDD<ConsumerRecord<String, String>>, JavaRDD<ConsumerRecord<String, String>>>() {
-            @Override
-            public JavaRDD<ConsumerRecord<String, String>> call(JavaRDD<ConsumerRecord<String, String>> value) throws Exception {
+         messages.foreachRDD(new VoidFunction<JavaRDD<ConsumerRecord<String, String>>>() {
+             @Override
+             public void call(JavaRDD<ConsumerRecord<String, String>> consumerRecordJavaRDD) throws Exception {
+                 OffsetRange[] offsetRanges = ((HasOffsetRanges) consumerRecordJavaRDD.rdd()).offsetRanges();
 
-                OffsetRange[] offsetRanges = ((HasOffsetRanges) value.rdd()).offsetRanges();
-                atomicReference.set(offsetRanges);
-                return value;
-            }
-        });
+                 JavaRDD<String> lines = consumerRecordJavaRDD.map(new Function<ConsumerRecord<String, String>, String>() {
+                     @Override
+                     public String call(ConsumerRecord<String, String> consumerRecord) throws Exception {
 
-        JavaDStream<String> lines = transform.map(new Function<ConsumerRecord<String, String>, String>() {
-            @Override
-            public String call(ConsumerRecord<String, String> consumerRecord) throws Exception {
+                         return consumerRecord.value();
+                     }
+                 });
 
-                return consumerRecord.value();
-            }
-        });
+                 //  lines.print();
+                 JavaRDD<JSONObject> filter = lines.map(new Function<String, JSONObject>() {
 
-      //  lines.print();
-        JavaDStream<JSONObject> filter = lines.map(new Function<String, JSONObject>() {
+                     public JSONObject call(String s) throws Exception {
+                         JSONObject ob = JSONObject.parseObject(s);
+                         return ob;
+                     }
 
-            public JSONObject call(String s) throws Exception {
-                JSONObject ob = JSONObject.parseObject(s);
-                return ob;
-            }
+                 }).filter(new Function<JSONObject, Boolean>() {
+                     @Override
+                     public Boolean call(JSONObject ob) throws Exception {
+                         return ob.getString("serviceName").equalsIgnoreCase("reChargeNotifyReq");
+                     }
+                 });
 
-        }).filter(new Function<JSONObject, Boolean>() {
-            @Override
-            public Boolean call(JSONObject ob) throws Exception {
-                return ob.getString("serviceName").equalsIgnoreCase("reChargeNotifyReq");
-            }
-        });
+                 // rdd 转换完成
+                 insertMysql(filter,offsetRanges);
 
-        // rdd 转换完成
-            insertMysql(filter,atomicReference);
+             }
+         });
 
             jssc.start();
             jssc.awaitTermination();
@@ -129,99 +128,90 @@ public class Demo02 {
         }
     }
 
-    public static  void insertMysql(JavaDStream<JSONObject> filter
-                    ,AtomicReference<OffsetRange[]> atomicReference) {
+    public static  void insertMysql(JavaRDD<JSONObject> filter,OffsetRange[] offsetRanges) {
         //持久化数据
         filter.persist(StorageLevel.MEMORY_ONLY());
 
-        filter.foreachRDD(new VoidFunction<JavaRDD<JSONObject>>() {
+        long num = filter.count();
+        if (num == 0) {
+            return;
+        }
+        // stringJavaRDD.coalesce(6);
 
+        JavaPairRDD<String[], Double[]> baseRDD = filter.mapToPair(new PairFunction<JSONObject, String[], Double[]>() {
             @Override
-            public void call(JavaRDD<JSONObject> stringJavaRDD) throws Exception {
-              //  OffsetRange[] offsetRanges = ((HasOffsetRanges) rdd.rdd()).offsetRanges();
-                // 获取偏移量
-               // OffsetRange[] offsetRanges = ((HasOffsetRanges)stringJavaRDD.rdd()).offsetRanges();
+            public Tuple2<String[], Double[]> call(JSONObject ob) throws Exception {
+                // 取出该条充值是否成功的标志
+                String result = ob.getString("bussinessRst");
 
-                long num = stringJavaRDD.count();
-                if (num == 0) {
-                    return;
+                double sucess = result.equals("0000") ? 1 : 0;
+                Double fee = result.equals("0000") ? Double.parseDouble(ob.getString("chargefee")) : 0;
+
+                // 充值发起时间和结束时间
+                String requestId = ob.getString("requestId");
+
+                // 获取日期
+                String year = requestId.substring(0, 4);
+                String month = requestId.substring(4,6);
+                String day = requestId.substring(6,8);
+                String hour = requestId.substring(8, 10);
+                String minute  = requestId.substring(10,12);
+                String endTime = ob.getString("receiveNotifyTime");
+                String starTime = requestId.substring(0, 17);
+
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmssSSS");
+                double cost = result.equals("0000") ? sdf.parse(endTime).getTime() - sdf.parse(starTime).getTime() : 0;
+
+                // (日期，(订单，成功订单，订单金额，订单时长))
+                return new Tuple2<String[], Double[]>(new String[]{year,month,day, hour, minute}, new Double[]{1.0, sucess, fee, cost});
+            }
+        }).filter(new Function<Tuple2<String[], Double[]>, Boolean>() {
+            @Override
+            public Boolean call(Tuple2<String[], Double[]> tuple2) throws Exception {
+                if (tuple2 == null) {
+                    return false;
                 }
-                // stringJavaRDD.coalesce(6);
+                return true;
+            }
+        });
 
-                JavaPairRDD<String[], Double[]> baseRDD = stringJavaRDD.mapToPair(new PairFunction<JSONObject, String[], Double[]>() {
-                    @Override
-                    public Tuple2<String[], Double[]> call(JSONObject ob) throws Exception {
-                        // 取出该条充值是否成功的标志
-                        String result = ob.getString("bussinessRst");
+        baseRDD.foreachPartition(new VoidFunction<Iterator<Tuple2<String[], Double[]>>>() {
+            @Override
+            public void call(Iterator<Tuple2<String[], Double[]>> tuple2Iterator) throws Exception {
 
-                        double sucess = result.equals("0000") ? 1 : 0;
-                        Double fee = result.equals("0000") ? Double.parseDouble(ob.getString("chargefee")) : 0;
+                // 获取conn
+                Connection conn = MysqlPool.getInstance().getConnection();
+                // 关闭mysql自动提交
+                // conn.setAutoCommit(false);
+                String sql = "insert into mobileOperation.order_info(_year,_month,_day,_hour,_minute,_total,_success,_money,_time) values";
+                PreparedStatement ps = conn.prepareStatement(sql);
 
-                        // 充值发起时间和结束时间
-                        String requestId = ob.getString("requestId");
+                StringBuffer sb = new StringBuffer("");
 
-                        // 获取日期
-                        String year = requestId.substring(0, 4);
-                        String month = requestId.substring(4,6);
-                        String day = requestId.substring(6,8);
-                        String hour = requestId.substring(8, 10);
-                        String minute  = requestId.substring(10,12);
-                        String endTime = ob.getString("receiveNotifyTime");
-                        String starTime = requestId.substring(0, 17);
+                while(tuple2Iterator.hasNext()){
+                    Tuple2<String[],Double[]> tu = tuple2Iterator.next();
+                    sb.append("('"+tu._1[0]+"','"+tu._1[1]+"','"+tu._1[2]+"','"+tu._1[3]+"','"+tu._1[4]+"',"+tu._2[0]
+                            +","+tu._2[1]+","+tu._2[2]+","+tu._2[3]+"),");
+                }
+                String exe_sql = sql + sb.substring(0, sb.length() - 1);
+                //   System.out.println(exe_sql+"=========");
+                //  ps.addBatch(exe_sql);
 
-                        SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmssSSS");
-                        double cost = result.equals("0000") ? sdf.parse(endTime).getTime() - sdf.parse(starTime).getTime() : 0;
-
-                        // (日期，(订单，成功订单，订单金额，订单时长))
-                        return new Tuple2<String[], Double[]>(new String[]{year,month,day, hour, minute}, new Double[]{1.0, sucess, fee, cost});
-                    }
-                }).filter(new Function<Tuple2<String[], Double[]>, Boolean>() {
-                    @Override
-                    public Boolean call(Tuple2<String[], Double[]> tuple2) throws Exception {
-                        if (tuple2 == null) {
-                            return false;
-                        }
-                        return true;
-                    }
-                });
-
-
-                final OffsetRange[] offsetRanges = atomicReference.get();
-
-                KafkaOffsetUtil.saveCurrentOffset(offsetRanges);
-
-                baseRDD.foreachPartition(new VoidFunction<Iterator<Tuple2<String[], Double[]>>>() {
-                    @Override
-                    public void call(Iterator<Tuple2<String[], Double[]>> tuple2Iterator) throws Exception {
-
-                        // 获取conn
-                        Connection conn = MysqlPool.getInstance().getConnection();
-                        // 关闭mysql自动提交
-                        // conn.setAutoCommit(false);
-                        String sql = "insert into mobileOperation.order_info(_year,_month,_day,_hour,_minute,_total,_success,_money,_time) values";
-                        PreparedStatement ps = conn.prepareStatement(sql);
-
-                        StringBuffer sb = new StringBuffer("");
-
-                        while(tuple2Iterator.hasNext()){
-                            Tuple2<String[],Double[]> tu = tuple2Iterator.next();
-                            sb.append("('"+tu._1[0]+"','"+tu._1[1]+"','"+tu._1[2]+"','"+tu._1[3]+"','"+tu._1[4]+"',"+tu._2[0]
-                                    +","+tu._2[1]+","+tu._2[2]+","+tu._2[3]+"),");
-                        }
-                        String exe_sql = sql + sb.substring(0, sb.length() - 1);
-                        //   System.out.println(exe_sql+"=========");
-                        //  ps.addBatch(exe_sql);
-
-                        ps.executeUpdate(exe_sql);
-                        //   conn.commit();
-                        conn.close();
-
-                    }
-                });
-
-
+                ps.executeUpdate(exe_sql);
+                //   conn.commit();
+                conn.close();
 
             }
         });
+
+        // 计算完毕，提交偏移量
+        try {
+            KafkaOffsetUtil.saveCurrentOffset(offsetRanges);
+        } catch (Exception e) {
+
+            System.out.println("存储偏移量异常！");
+            e.printStackTrace();
+        }
+
     }
 }
