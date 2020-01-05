@@ -39,7 +39,8 @@ public class MyKafkaProducer {
         BufferedReader br = new BufferedReader(new FileReader("E:\\WorkSpaces\\PracticalProject\\MobileOperating\\项目资料\\flumeLoggerapp4.log.20170412"));
         String line = null;
         while ((line = br.readLine()) != null){
-            record = new ProducerRecord<Integer, String>("testTopic", line);
+           // record = new ProducerRecord<Integer, String>("testTopic", line);
+            record = new ProducerRecord<Integer, String>("docker-topic", line);
             producer.send(record);
              Thread.sleep(100);
         }
