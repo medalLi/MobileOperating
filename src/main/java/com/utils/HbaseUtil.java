@@ -1,4 +1,4 @@
-package main.java.com.utils;
+package com.utils;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
@@ -11,8 +11,6 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * Created by ly-meibaiqi on 2018/3/15.
- * meiboqi@126.com
  */
 public class HbaseUtil {
 
@@ -114,7 +112,7 @@ public class HbaseUtil {
     private static Configuration createConf() {
 //        Properties props = new PropertiesUtil("common.properties").getProperties();
         Configuration conf = HBaseConfiguration.create();
-        conf.set("hbase.zookeeper.quorum","hadoop02,hadoop03,hadoop04,hadoop05,hadoop06");//使用eclipse时必须添加这个，否则无法定位
+        conf.set("hbase.zookeeper.quorum","cdh.medal.com");//使用eclipse时必须添加这个，否则无法定位
         conf.set("hbase.zookeeper.property.clientPort", "2181");
         return conf;
     }
@@ -135,7 +133,7 @@ public class HbaseUtil {
     public static Connection getHBaseConnection() {
 //            Properties props = new PropertiesUtil("common.properties").getProperties();
         hbaseConfiguration = HBaseConfiguration.create();
-        hbaseConfiguration.set("hbase.zookeeper.quorum", "hadoop02,hadoop03,hadoop04,hadoop05,hadoop06");//使用eclipse时必须添加这个，否则无法定位
+        hbaseConfiguration.set("hbase.zookeeper.quorum", "cdh.medal.com");//使用eclipse时必须添加这个，否则无法定位
         hbaseConfiguration.set("hbase.zookeeper.property.clientPort", "2181");
         try {
             hbaseConnection = ConnectionFactory.createConnection(hbaseConfiguration);
